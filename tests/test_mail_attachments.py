@@ -1,9 +1,11 @@
+import os
+mail = os.getenv("foldermail")
 from q_outlook_api.functionality.mail_api import get_attachments, download_attachment
 
 
 def test_attachments():
 
-    user = "a-kassesamtaler@haderslev.dk"
+    user = mail
     message_id = "INDSÆT_MAIL_ID"
 
     attachments = get_attachments(user, message_id)

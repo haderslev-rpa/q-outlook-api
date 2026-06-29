@@ -1,6 +1,6 @@
 import requests
 
-from q_outlook_api.outlook_api import get_client
+from q_outlook_api.functionality.outlook_api import get_client
 from q_outlook_api.utils import (
     to_graph_datetime,
     build_attendees,
@@ -53,9 +53,11 @@ def get_events(user_mail, start_dt, end_dt, raw=False):
     headers = client.auth.headers()
     headers["Prefer"] = 'outlook.timezone="W. Europe Standard Time"'
 
+    # ✅ konverter dato korrekt
     start = to_graph_datetime(start_dt)
     end = to_graph_datetime(end_dt)
 
+    # ✅ hent default kalender
     url_cal = f"{client.base}/users/{user_mail}/calendars"
 
     r = requests.get(url_cal, headers=headers, timeout=30)
@@ -63,20 +65,33 @@ def get_events(user_mail, start_dt, end_dt, raw=False):
 
     cal = next(c for c in r.json()["value"] if c["isDefaultCalendar"])
 
-    url_events = (
+    # ✅ start URL (første side)
+    url = (
         f"{client.base}/users/{user_mail}/calendars/{cal['id']}/calendarView"
         f"?startDateTime={start}&endDateTime={end}"
     )
 
-    r = requests.get(url_events, headers=headers, timeout=30)
-    r.raise_for_status()
+    all_events = []  # liste (samler events)
 
-    events = r.json()["value"]
+    # ✅ 🔥 PAGINATION
+    while url:
+        r = requests.get(url, headers=headers, timeout=30)
+        r.raise_for_status()
 
+        data = r.json()
+
+        events = data.get("value", [])
+        all_events.extend(events)
+
+        # næste side
+        url = data.get("@odata.nextLink")
+
+    # ✅ RAW output
     if raw:
-        return events
+        return all_events
 
-    return [format_event(e) for e in events]
+    # ✅ formatted output
+    return [format_event(e) for e in all_events]
 
 
 # -------------------------------------------------

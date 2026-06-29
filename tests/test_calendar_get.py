@@ -1,12 +1,13 @@
-from q_outlook_api.functionality.calendar_api import get_calendar_events
-
+from q_outlook_api.functionality.calendar_api import get_events
+import os
+mail = os.getenv("foldermail")
 
 def test_get():
 
-    events = get_calendar_events(
-        "a-kassesamtaler@haderslev.dk",
-        "2026-01-04T00:00:00",
-        "2026-02-04T00:00:00"
+    events = get_events(
+        mail,
+        "01-04-2026 07:00",
+        "01-04-2026 11:00"
     )
 
     print("\n✅ EVENTS:\n")
@@ -14,6 +15,7 @@ def test_get():
     for e in events:
         print(e.get("subject"))
         print(e.get("start"))
+        print(e.get("id"))
         print("-" * 40)
 
 

@@ -2,16 +2,16 @@ import requests
 import base64
 import os
 
-from q_outlook_api.outlook_api import get_client
+from q_outlook_api.functionality.outlook_api import get_client
+from q_outlook_api.utils import utc_to_danish
+from q_outlook_api.utils import to_graph_filter_datetime
+from q_outlook_api.functionality.mail_rules import apply_sharepoint_rules
 
 
 # -------------------------------------------------
 # INTERNAL HELPER (PAGINATION)
 # -------------------------------------------------
 def _get_all_pages(url, headers):
-    """
-    Henter ALLE sider via pagination
-    """
 
     all_data = []
 
@@ -30,234 +30,7 @@ def _get_all_pages(url, headers):
 
 
 # -------------------------------------------------
-# GET MAILS (ALTID PAGINATION)
-# -------------------------------------------------
-def get_mails(user_mail, raw=False):
-
-    client = get_client()
-    headers = client.auth.headers()
-
-    url = f"{client.base}/users/{user_mail}/messages"
-
-    mails = _get_all_pages(url, headers)
-
-    if raw:
-        return mails
-
-    return [
-        {
-            "id": m.get("id"),
-            "subject": m.get("subject"),
-            "from": m.get("from", {}).get("emailAddress", {}).get("address"),
-            "is_read": m.get("isRead"),
-        }
-        for m in mails
-    ]
-
-
-# -------------------------------------------------
-# SEARCH MAILS (PAGINATION)
-# -------------------------------------------------
-def search_mails(user_mail, query, raw=False):
-    """
-    Søg mails med pagination
-    """
-
-    client = get_client()
-    headers = client.auth.headers()
-
-    headers["ConsistencyLevel"] = "eventual"
-
-    url = (
-        f"{client.base}/users/{user_mail}/messages"
-        f"?$search=\"{query}\""
-    )
-
-    mails = _get_all_pages(url, headers)
-
-    if raw:
-        return mails
-
-    return [
-        {
-            "id": m.get("id"),
-            "subject": m.get("subject"),
-            "from": m.get("from", {}).get("emailAddress", {}).get("address"),
-        }
-        for m in mails
-    ]
-
-
-# -------------------------------------------------
-# SEND MAIL
-# -------------------------------------------------
-def send_mail(user_mail, mail):
-
-    client = get_client()
-    headers = client.auth.headers()
-
-    url = f"{client.base}/users/{user_mail}/sendMail"
-
-    data = {
-        "message": {
-            "subject": mail["subject"],
-            "body": {
-                "contentType": "HTML",
-                "content": mail["body"]
-            },
-            "toRecipients": [
-                {"emailAddress": {"address": r}}
-                for r in mail["to"]
-            ]
-        },
-        "saveToSentItems": True
-    }
-
-    r = requests.post(url, headers=headers, json=data, timeout=30)
-    r.raise_for_status()
-
-    return True
-
-
-# -------------------------------------------------
-# FORWARD MAIL
-# -------------------------------------------------
-def forward_mail(user_mail, message_id, to):
-
-    client = get_client()
-    headers = client.auth.headers()
-
-    url = f"{client.base}/users/{user_mail}/messages/{message_id}/forward"
-
-    data = {
-        "toRecipients": [
-            {"emailAddress": {"address": r}}
-            for r in to
-        ]
-    }
-
-    r = requests.post(url, headers=headers, json=data, timeout=30)
-    r.raise_for_status()
-
-    return True
-
-
-# -------------------------------------------------
-# REPLY MAIL
-# -------------------------------------------------
-def reply_mail(user_mail, message_id, body_text):
-
-    client = get_client()
-    headers = client.auth.headers()
-
-    url = f"{client.base}/users/{user_mail}/messages/{message_id}/reply"
-
-    data = {
-        "message": {
-            "body": {
-                "contentType": "HTML",
-                "content": body_text
-            }
-        }
-    }
-
-    r = requests.post(url, headers=headers, json=data, timeout=30)
-    r.raise_for_status()
-
-    return True
-
-
-# -------------------------------------------------
-# MARK AS READ
-# -------------------------------------------------
-def mark_as_read(user_mail, message_id):
-
-    client = get_client()
-    headers = client.auth.headers()
-
-    url = f"{client.base}/users/{user_mail}/messages/{message_id}"
-
-    r = requests.patch(
-        url,
-        headers=headers,
-        json={"isRead": True},
-        timeout=30
-    )
-    r.raise_for_status()
-
-    return True
-
-
-# -------------------------------------------------
-# UPDATE MAIL (labels)
-# -------------------------------------------------
-def update_mail(user_mail, message_id, updates):
-
-    client = get_client()
-    headers = client.auth.headers()
-
-    url = f"{client.base}/users/{user_mail}/messages/{message_id}"
-
-    r = requests.patch(url, headers=headers, json=updates, timeout=30)
-    r.raise_for_status()
-
-    return r.json()
-
-
-# -------------------------------------------------
-# GET FOLDERS
-# -------------------------------------------------
-def get_folders(user_mail):
-
-    client = get_client()
-    headers = client.auth.headers()
-
-    url = f"{client.base}/users/{user_mail}/mailFolders"
-
-    return _get_all_pages(url, headers)
-
-
-# -------------------------------------------------
-# CREATE FOLDER
-# -------------------------------------------------
-def create_folder(user_mail, folder_name, parent_folder_id=None):
-
-    client = get_client()
-    headers = client.auth.headers()
-
-    if parent_folder_id:
-        url = f"{client.base}/users/{user_mail}/mailFolders/{parent_folder_id}/childFolders"
-    else:
-        url = f"{client.base}/users/{user_mail}/mailFolders"
-
-    data = {"displayName": folder_name}
-
-    r = requests.post(url, headers=headers, json=data, timeout=30)
-    r.raise_for_status()
-
-    return r.json()
-
-
-# -------------------------------------------------
-# MOVE MAIL
-# -------------------------------------------------
-def move_mail(user_mail, message_id, destination_folder_id):
-
-    client = get_client()
-    headers = client.auth.headers()
-
-    url = f"{client.base}/users/{user_mail}/messages/{message_id}/move"
-
-    data = {"destinationId": destination_folder_id}
-
-    r = requests.post(url, headers=headers, json=data, timeout=30)
-    r.raise_for_status()
-
-    return r.json()
-
-
-# -------------------------------------------------
-# GET ATTACHMENTS
+# GET ATTACHMENTS (metadata - offentlig funktion)
 # -------------------------------------------------
 def get_attachments(user_mail, message_id):
 
@@ -266,7 +39,300 @@ def get_attachments(user_mail, message_id):
 
     url = f"{client.base}/users/{user_mail}/messages/{message_id}/attachments"
 
-    return _get_all_pages(url, headers)
+    r = requests.get(url, headers=headers, timeout=30)
+    r.raise_for_status()
+
+    data = r.json().get("value", [])
+
+    return [
+        {
+            "id": a.get("id"),
+            "name": a.get("name"),
+            "content_type": a.get("contentType"),
+            "size": a.get("size")
+        }
+        for a in data
+    ]
+
+# -------------------------------------------------
+# FORMAT MAIL (fælles formattering)
+# -------------------------------------------------
+# -------------------------------------------------
+# FORMAT MAIL (fælles formattering)
+# -------------------------------------------------
+def _format_mail(m, user_mail, headers, folder, include_attachments=False):
+    """
+    Formaterer mail til et rent og ensartet output
+    """
+
+    # ✅ attachments (kun hvis slået til)
+    attachments = []
+    if include_attachments and m.get("hasAttachments"):
+        attachments = get_attachments(user_mail, m.get("id"))
+
+    # ✅ konverter UTC -> dansk tid (string)
+    dt_received = utc_to_danish(m.get("receivedDateTime"))
+    dt_sent = utc_to_danish(m.get("sentDateTime"))
+
+    received_danish_str = None
+    sent_danish_str = None
+
+    if dt_received:
+        received_danish_str = dt_received.strftime("%d-%m-%Y %H:%M:%S")
+
+    if dt_sent:
+        sent_danish_str = dt_sent.strftime("%d-%m-%Y %H:%M:%S")
+
+    return {
+
+        # -------------------------
+        # CORE
+        # -------------------------
+        "id": m.get("id"),
+        "subject": m.get("subject"),
+
+        "from_email": m.get("from", {}).get("emailAddress", {}).get("address"),
+        "from_name": m.get("from", {}).get("emailAddress", {}).get("name"),
+
+        "folder": folder,
+
+        "to": [
+            r.get("emailAddress", {}).get("address")
+            for r in (m.get("toRecipients") or [])
+        ],
+        "cc": [
+            r.get("emailAddress", {}).get("address")
+            for r in (m.get("ccRecipients") or [])
+        ],
+        "bcc": [
+            r.get("emailAddress", {}).get("address")
+            for r in (m.get("bccRecipients") or [])
+        ],
+
+        "body_text": (m.get("body") or {}).get("content"),
+
+        # -------------------------
+        # DATO (REN STRUKTUR)
+        # -------------------------
+        "received_utc": m.get("receivedDateTime"),
+        "received_danish_str": received_danish_str,
+
+        "sent_utc": m.get("sentDateTime"),
+        "sent_danish_str": sent_danish_str,
+
+        # -------------------------
+        # STATUS
+        # -------------------------
+        "is_read": m.get("isRead"),
+        "has_attachments": m.get("hasAttachments"),
+
+        "attachments": attachments,
+
+        # -------------------------
+        # META
+        # -------------------------
+        "categories": m.get("categories") or [],
+        "conversation_id": m.get("conversationId"),
+
+        # -------------------------
+        # BUSINESS
+        # -------------------------
+        "til_robot": m.get("til_robot"),
+        "procesnavn": m.get("procesnavn")
+    }
+
+
+# -------------------------------------------------
+# GET MAILS
+# -------------------------------------------------
+def get_mails(
+    user_mail,
+    folder="inbox",
+    raw=False,
+    limit=None,
+    apply_rules=False,
+    procesnavn=None,
+    debug=False,
+    include_attachments=False
+):
+
+    client = get_client()
+    headers = client.auth.headers()
+
+    url = f"{client.base}/users/{user_mail}/mailFolders/{folder}/messages"
+
+    all_mails = []
+
+    while url:
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+
+        data = response.json()
+        mails = data.get("value", [])
+
+        all_mails.extend(mails)
+
+        if limit and len(all_mails) >= limit:
+            all_mails = all_mails[:limit]
+            break
+
+        url = data.get("@odata.nextLink")
+
+    if apply_rules:
+
+        if not procesnavn:
+            raise Exception("procesnavn mangler")
+
+        all_mails = apply_sharepoint_rules(
+            mails=all_mails,
+            procesnavn=procesnavn,
+            mailbox=user_mail,
+            debug=debug
+        )
+
+    if raw:
+        return {
+            "formatted": [
+                _format_mail(m, user_mail, headers, folder, include_attachments)
+                for m in all_mails
+            ],
+            "raw": all_mails
+        }
+
+    return [
+        _format_mail(m, user_mail, headers, folder, include_attachments)
+        for m in all_mails
+    ]
+
+
+# -------------------------------------------------
+# SEARCH MAILS (QUERY)
+# -------------------------------------------------
+def search_mails_query(
+    user_mail,
+    query,
+    folder="inbox",
+    raw=False,
+    limit=None,
+    apply_rules=False,
+    procesnavn=None,
+    debug=False,
+    include_attachments=False
+):
+
+    client = get_client()
+    headers = client.auth.headers()
+    headers["ConsistencyLevel"] = "eventual"
+
+    url = (
+        f"{client.base}/users/{user_mail}/mailFolders/{folder}/messages"
+        f"?$search=\"{query}\""
+    )
+
+    mails = _get_all_pages(url, headers)
+
+    if limit:
+        mails = mails[:limit]
+
+    if apply_rules:
+        mails = apply_sharepoint_rules(
+            mails=mails,
+            procesnavn=procesnavn,
+            mailbox=user_mail,
+            debug=debug
+        )
+
+    if raw:
+        return {
+            "formatted": [
+                _format_mail(m, user_mail, headers, folder, include_attachments)
+                for m in mails
+            ],
+            "raw": mails
+        }
+
+    return [
+        _format_mail(m, user_mail, headers, folder, include_attachments)
+        for m in mails
+    ]
+
+
+# -------------------------------------------------
+# SEARCH MAILS (FILTER)
+# -------------------------------------------------
+def search_mails_filter(
+    user_mail,
+    subject=None,
+    from_email=None,
+    date_from=None,
+    date_to=None,
+    folder="inbox",
+    raw=False,
+    limit=None,
+    apply_rules=False,
+    procesnavn=None,
+    debug=False,
+    include_attachments=False
+):
+
+    client = get_client()
+    headers = client.auth.headers()
+
+    filter_parts = []
+
+    if date_from:
+        filter_parts.append(
+            f"receivedDateTime ge {to_graph_filter_datetime(date_from)}"
+        )
+
+    if date_to:
+        filter_parts.append(
+            f"receivedDateTime le {to_graph_filter_datetime(date_to, end_of_day=True)}"
+        )
+
+    if from_email:
+        filter_parts.append(
+            f"from/emailAddress/address eq '{from_email}'"
+        )
+
+    query_string = ""
+    if filter_parts:
+        query_string = "$filter=" + " AND ".join(filter_parts)
+
+    if query_string:
+        url = f"{client.base}/users/{user_mail}/mailFolders/{folder}/messages?{query_string}"
+    else:
+        url = f"{client.base}/users/{user_mail}/mailFolders/{folder}/messages"
+
+    mails = _get_all_pages(url, headers)
+
+    if subject:
+        mails = [m for m in mails if subject.lower() in (m.get("subject") or "").lower()]
+
+    if limit:
+        mails = mails[:limit]
+
+    if apply_rules:
+        mails = apply_sharepoint_rules(
+            mails=mails,
+            procesnavn=procesnavn,
+            mailbox=user_mail,
+            debug=debug
+        )
+
+    if raw:
+        return {
+            "formatted": [
+                _format_mail(m, user_mail, headers, folder, include_attachments)
+                for m in mails
+            ],
+            "raw": mails
+        }
+
+    return [
+        _format_mail(m, user_mail, headers, folder, include_attachments)
+        for m in mails
+    ]
 
 
 # -------------------------------------------------
@@ -289,7 +355,6 @@ def download_attachment(
     r.raise_for_status()
 
     data = r.json()
-
     file_bytes = base64.b64decode(data["contentBytes"])
 
     if as_bytes:

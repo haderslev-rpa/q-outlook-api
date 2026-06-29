@@ -1,9 +1,11 @@
+import os
+mail = os.getenv("foldermail")
 from q_outlook_api.functionality.mail_api import get_folders
 
 
 def test_get_folders():
 
-    user_mail = "a-kassesamtaler@haderslev.dk"
+    user_mail = mail
 
     folders = get_folders(user_mail)
 

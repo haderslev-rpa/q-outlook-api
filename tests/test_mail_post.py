@@ -1,14 +1,17 @@
+import os
+mail = os.getenv("foldermail")
+runemail = os.getenv("runemail")
 from q_outlook_api.functionality.mail_api import send_mail
 
 
 def test_post():
 
-    user = "a-kassesamtaler@haderslev.dk"
+    user = mail
 
     mail = {
         "subject": "Test mail fra Python",
         "body": "Dette er en test mail",
-        "to": ["rujo@haderslev.dk"]
+        "to": [runemail]
     }
 
     send_mail(user, mail)

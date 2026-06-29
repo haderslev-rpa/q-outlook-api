@@ -1,3 +1,5 @@
+import os
+mail = os.getenv("runemail")
 from q_outlook_api.functionality.calendar_api import create_event
 from q_outlook_api.utils import parse_datetime
 
@@ -7,11 +9,10 @@ def test_post():
     event = {
         "subject": "Test_Emne",
         "body": "Test_Brødtekst",
-        "start": parse_datetime("01-04-2026 09:00"),
-        "end": parse_datetime("01-04-2026 09:30"),
+        "start": "01-04-2026 09:00",
+        "end": "01-04-2026 09:30",
         "participants": [
-            {"email": "rujo@haderslev.dk", "name": "Rune"},
-            {"email": "emha@haderslev.dk", "name": "Maria"}
+            {"email": mail, "name": "Rune"}
         ]
     }
 

@@ -1,9 +1,11 @@
+import os
+mail = os.getenv("foldermail")
 from q_outlook_api.functionality.mail_api import forward_mail
 
 
 def test_forward():
 
-    user = "a-kassesamtaler@haderslev.dk"
+    user = mail
     message_id = "INDSÆT_MAIL_ID"
 
     forward_mail(

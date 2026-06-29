@@ -1,9 +1,11 @@
+import os
+mail = os.getenv("foldermail")
 from q_outlook_api.functionality.mail_api import mark_as_read
 
 
 def test_mark_read():
 
-    user = "a-kassesamtaler@haderslev.dk"
+    user = mail
     message_id = "INDSÆT_MAIL_ID"
 
     mark_as_read(user, message_id)
