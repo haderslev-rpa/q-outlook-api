@@ -7,9 +7,9 @@ def test_search_query():
 
     mails = search_mails_query(
         user_mail=mail,
-        query="Test",  # søgetekst
+        query="børne",  # søgetekst
         limit=10,
-        apply_rules=True,
+        #apply_rules=True,
         procesnavn="Oprettelse af sager i Acadre - Arrangementer",
         include_attachments=False,
         debug=True

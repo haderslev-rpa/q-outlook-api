@@ -9,7 +9,7 @@ def test_search_filter():
     mails = search_mails_filter(
         user_mail=mail,
         date_from="01-06-2026",
-        date_to="30-06-2026",
+        date_to="02-07-2026",
         limit=10,
         apply_rules=False,
         #procesnavn="Oprettelse af sager i Acadre - Arrangementer",
