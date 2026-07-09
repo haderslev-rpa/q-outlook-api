@@ -1,17 +1,22 @@
 import os
-mail = os.getenv("foldermail")
-runemail = os.getenv("runemail")
+from dotenv import load_dotenv
+
 from q_outlook_api.functionality.mail_api import send_mail
 
 
 def test_post():
 
-    user = mail
+    load_dotenv()
+
+    user = os.getenv("lis")
+    runemail = os.getenv("runemail")
 
     mail = {
         "subject": "Test mail fra Python",
         "body": "Dette er en test mail",
-        "to": [runemail]
+        "to": [runemail],
+        "cc": [],
+        "bcc": []
     }
 
     send_mail(user, mail)

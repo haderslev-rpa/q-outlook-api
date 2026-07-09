@@ -28,6 +28,162 @@ def _get_all_pages(url, headers):
 
     return all_data
 
+# -------------------------------------------------
+# BUILD RECIPIENTS
+# -------------------------------------------------
+def _build_recipients(addresses):
+    """
+    Bygger Graph recipient format.
+
+    addresses:
+        Liste med mailadresser.
+        Fx ["test@haderslev.dk"]
+    """
+
+    if not addresses:
+        return []
+
+    return [
+        {
+            "emailAddress": {
+                "address": address
+            }
+        }
+        for address in addresses
+        if address
+    ]
+
+
+# -------------------------------------------------
+# SEND MAIL
+# -------------------------------------------------
+def send_mail(user_mail, mail):
+    """
+    Sender en ny mail.
+
+    user_mail:
+        Postkassen der sender mailen.
+
+    mail:
+        Dictionary (samling af data) med:
+        - subject
+        - body
+        - to
+        - cc
+        - bcc
+    """
+
+    client = get_client()
+    headers = client.auth.headers()
+
+    url = f"{client.base}/users/{user_mail}/sendMail"
+
+    data = {
+        "message": {
+            "subject": mail.get("subject", ""),
+            "body": {
+                "contentType": mail.get("content_type", "HTML"),
+                "content": mail.get("body", "")
+            },
+            "toRecipients": _build_recipients(mail.get("to")),
+            "ccRecipients": _build_recipients(mail.get("cc")),
+            "bccRecipients": _build_recipients(mail.get("bcc"))
+        },
+        "saveToSentItems": mail.get("save_to_sent_items", True)
+    }
+
+    response = requests.post(
+        url,
+        headers=headers,
+        json=data,
+        timeout=30
+    )
+    response.raise_for_status()
+
+    return True
+
+# -------------------------------------------------
+# FORWARD MAIL
+# -------------------------------------------------
+def forward_mail(user_mail, message_id, forward):
+    """
+    Videresender en mail.
+
+    user_mail:
+        Postkassen hvor mailen ligger.
+
+    message_id:
+        ID på mailen der skal videresendes.
+
+    forward:
+        Dictionary (samling af data) med:
+        - to
+        - cc
+        - bcc
+        - subject
+        - body
+    """
+
+    client = get_client()
+    headers = client.auth.headers()
+
+    # -------------------------------------------------
+    # 1. Opret forward draft (kladde)
+    # -------------------------------------------------
+    create_url = f"{client.base}/users/{user_mail}/messages/{message_id}/createForward"
+
+    create_data = {
+        "comment": forward.get("body", "")
+    }
+
+    create_response = requests.post(
+        create_url,
+        headers=headers,
+        json=create_data,
+        timeout=30
+    )
+    create_response.raise_for_status()
+
+    draft = create_response.json()
+    draft_id = draft["id"]
+
+    # -------------------------------------------------
+    # 2. Opdater draft med modtagere og evt. subject
+    # -------------------------------------------------
+    patch_url = f"{client.base}/users/{user_mail}/messages/{draft_id}"
+
+    patch_data = {
+        "toRecipients": _build_recipients(forward.get("to")),
+        "ccRecipients": _build_recipients(forward.get("cc")),
+        "bccRecipients": _build_recipients(forward.get("bcc"))
+    }
+
+    # Hvis du sender subject med, overskrives forward-emnet
+    if forward.get("subject"):
+        patch_data["subject"] = forward.get("subject")
+
+    patch_response = requests.patch(
+        patch_url,
+        headers=headers,
+        json=patch_data,
+        timeout=30
+    )
+    patch_response.raise_for_status()
+
+    # -------------------------------------------------
+    # 3. Send draft
+    # -------------------------------------------------
+    send_url = f"{client.base}/users/{user_mail}/messages/{draft_id}/send"
+
+    send_response = requests.post(
+        send_url,
+        headers=headers,
+        timeout=30
+    )
+    send_response.raise_for_status()
+
+    return True
+
 
 # -------------------------------------------------
 # GET ATTACHMENTS (metadata - offentlig funktion)
