@@ -1,36 +1,144 @@
+"""
+TEST: HENT MAILS MED SHAREPOINT-REGLER
+
+Miljøvariabler:
+- TEST_MAIL
+- mail
+- foldermail
+- TEST_PROCESS_NAME
+"""
+
 import os
-mail = os.getenv("mail")
+from pprint import pprint
 
 from q_outlook_api.functionality.mail_api import get_mails
 
+
+# -------------------------------------------------
+# KONFIGURATION
+# -------------------------------------------------
+
+USER_MAIL = (
+    os.getenv("TEST_MAIL")
+    or os.getenv("mail")
+    or os.getenv("foldermail")
+)
+
+PROCESS_NAME = os.getenv(
+    "TEST_PROCESS_NAME",
+    "Flytning af filer",
+)
+
+FOLDER = os.getenv(
+    "TEST_MAIL_FOLDER",
+    "inbox",
+)
+
+
+# -------------------------------------------------
+# TEST
+# -------------------------------------------------
+
 def test_get_mails():
+    """
+    Henter mails og anvender SharePoint-regler.
+    """
+
+    if not USER_MAIL:
+        raise ValueError(
+            "Sæt miljøvariablen TEST_MAIL, "
+            "mail eller foldermail."
+        )
 
     mails = get_mails(
-        user_mail=mail,
+        user_mail=USER_MAIL,
+        folder=FOLDER,
         limit=10,
         apply_rules=True,
-        procesnavn="Flytning af filer",
-        include_attachments=True,  # ✅ slå til hvis du vil se attachments
-        debug=True
+        procesnavn=PROCESS_NAME,
+        include_attachments=True,
+        debug=True,
     )
 
-    print("\n✅ RESULTAT:\n")
+    print("\nRESULTAT:\n")
 
-    for m in mails:
-        print("📧 Subject:", m.get("subject"))
-        print("👤 From:", m.get("from_email"))
-        print("📅 Modtaget:", m.get("received_str"))
-        print("🤖 Til robot:", m.get("til_robot"))
-        print("🤖 Folder:", m.get("folder"))
+    for mail in mails:
+        assert isinstance(
+            mail.get("categories"),
+            list,
+        )
 
-        # ✅ attachments
-        if m.get("attachments"):
-            print("📎 Attachments:")
-            for a in m.get("attachments"):
-                print("   -", a.get("name"), f"({a.get('size')} bytes)")
+        assert isinstance(
+            mail.get("attachment_names"),
+            list,
+        )
+
+        assert isinstance(
+            mail.get("attachments"),
+            list,
+        )
+
+        print("Subject:", mail.get("subject"))
+        print(
+            "From:",
+            mail.get("sender_address"),
+        )
+        print(
+            "Modtaget:",
+            mail.get(
+                "received_datetime_danish"
+            ),
+        )
+        print(
+            "Til robot:",
+            mail.get("til_robot"),
+        )
+        print(
+            "Procesnavn:",
+            mail.get("procesnavn"),
+        )
+        print(
+            "Folder:",
+            mail.get("folder"),
+        )
+        print(
+            "Kategorier:",
+            mail.get("categories"),
+        )
+        print(
+            "Filnavne:",
+            mail.get("attachment_names"),
+        )
+
+        if mail.get("attachments"):
+            print("Attachments:")
+
+            for attachment in mail[
+                "attachments"
+            ]:
+                print(
+                    "   -",
+                    attachment.get("name"),
+                    (
+                        f"({attachment.get('size')} "
+                        "bytes)"
+                    ),
+                )
 
         print("-" * 50)
 
+    if mails:
+        print("\nFørste fulde mail:")
+        pprint(mails[0])
+
+    print(
+        "\nOK: Mailregel-testen blev gennemført."
+    )
+
+
+# -------------------------------------------------
+# KØR TEST DIREKTE
+# -------------------------------------------------
 
 if __name__ == "__main__":
     test_get_mails()
