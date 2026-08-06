@@ -2620,6 +2620,133 @@ def move_mail(
         get_inline=False,
     )
 
+# -------------------------------------------------
+# DELETE MAIL
+# -------------------------------------------------
+
+def delete_mail(
+    user_mail,
+    message_id,
+    permanent_delete=False,
+):
+    """
+    Sletter en mail.
+
+    permanent_delete=False:
+        Flytter mailen til Outlook-mappen
+        "Slettet post".
+
+        Microsoft Graph bruger det faste
+        mappenavn "deleteditems", uanset
+        hvilket sprog Outlook bruger.
+
+        Mailen kan normalt gendannes fra
+        mappen Slettet post.
+
+    permanent_delete=True:
+        Udfører permanent sletning via
+        Microsoft Graph.
+
+        Mailen flyttes til Exchange-mappens
+        skjulte purges-område og kan ikke
+        længere ses i Outlook.
+
+        Den endelige opbevaring afhænger af
+        organisationens retention-politik.
+
+    Returnerer en dictionary med resultatet.
+    """
+
+    if not isinstance(
+        permanent_delete,
+        bool,
+    ):
+        raise TypeError(
+            "permanent_delete skal være "
+            "True eller False."
+        )
+
+
+    # -------------------------------------------------
+    # FLYT TIL SLETTET POST
+    # -------------------------------------------------
+
+    if not permanent_delete:
+        moved_mail = move_mail(
+            user_mail=user_mail,
+            message_id=message_id,
+            destination_folder_id=(
+                "deleteditems"
+            ),
+        )
+
+        moved_message_id = None
+
+        if moved_mail:
+            moved_message_id = (
+                moved_mail.get(
+                    "message_id"
+                )
+                or moved_mail.get(
+                    "id"
+                )
+            )
+
+        return {
+            "success": True,
+            "action": (
+                "moved_to_deleted_items"
+            ),
+            "permanent_delete": False,
+            "folder": "Slettet post",
+            "message_id": (
+                moved_message_id
+            ),
+        }
+
+
+    # -------------------------------------------------
+    # PERMANENT SLETNING
+    # -------------------------------------------------
+
+    headers = _get_headers(
+        prefer_plain_text=False,
+    )
+
+    url = (
+        f"{_message_url(user_mail, message_id)}"
+        f"/permanentDelete"
+    )
+
+    response = requests.post(
+        url,
+        headers=headers,
+        timeout=DEFAULT_TIMEOUT,
+    )
+
+    if response.status_code == 404:
+        raise MailNotFoundError(
+            "Mailen findes ikke længere i Outlook."
+        )
+
+    response.raise_for_status()
+
+    if response.status_code != 204:
+        raise RuntimeError(
+            "Microsoft Graph returnerede en "
+            "uventet HTTP-status ved permanent "
+            "sletning. "
+            f"HTTP-status: {response.status_code}"
+        )
+
+    return {
+        "success": True,
+        "action": "permanently_deleted",
+        "permanent_delete": True,
+        "folder": None,
+        "message_id": None,
+    }
+
 
 # -------------------------------------------------
 # UPDATE MAIL CATEGORIES
