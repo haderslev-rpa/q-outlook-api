@@ -610,53 +610,194 @@ def send_mail(user_mail, mail):
 
     return True
 
-
 # -------------------------------------------------
-# FORWARD MAIL
+# FORWARD MAIL HELPERS
 # -------------------------------------------------
 
-def forward_mail(user_mail, message_id, forward):
+logger = logging.getLogger(__name__)
+
+
+def _validate_forward_mode(
+    forward_mode,
+):
     """
-    Videresender en mail.
+    Kontrollerer den valgte videresendelsesmetode.
 
-    user_mail:
-        Postkassen hvor mailen ligger.
+    Tilladte værdier:
 
-    message_id:
-        ID på mailen der skal videresendes.
+    comment:
+        En enkel kommentar.
 
-    forward:
-        Dictionary med:
-        - to
-        - cc
-        - bcc
-        - subject
-        - body
+    formatted:
+        HTML-formateret tekst indsættes øverst.
+    """
+
+    normalized_mode = (
+        str(
+            forward_mode
+            or "comment"
+        )
+        .strip()
+        .casefold()
+    )
+
+    valid_modes = {
+        "comment",
+        "formatted",
+    }
+
+    if normalized_mode not in valid_modes:
+        raise ValueError(
+            "Ukendt forward_mode. "
+            "Tilladte værdier er "
+            "'comment' og 'formatted'."
+        )
+
+    return normalized_mode
+
+
+def _insert_html_after_body_tag(
+    original_html,
+    new_html,
+):
+    """
+    Indsætter ny HTML umiddelbart efter
+    det eksisterende body-tag.
+
+    Resten af den Graph-genererede HTML
+    beholdes uændret.
+
+    Hvis body-tagget ikke findes, placeres
+    den nye HTML før det eksisterende indhold.
+    """
+
+    original_html = str(
+        original_html
+        or ""
+    )
+
+    new_html = str(
+        new_html
+        or ""
+    )
+
+    body_start = (
+        original_html
+        .casefold()
+        .find("<body")
+    )
+
+    if body_start == -1:
+        return (
+            new_html
+            + original_html
+        )
+
+    body_tag_end = original_html.find(
+        ">",
+        body_start,
+    )
+
+    if body_tag_end == -1:
+        return (
+            new_html
+            + original_html
+        )
+
+    insert_position = (
+        body_tag_end + 1
+    )
+
+    return (
+        original_html[
+            :insert_position
+        ]
+        + new_html
+        + original_html[
+            insert_position:
+        ]
+    )
+
+
+def _delete_forward_draft(
+    user_mail,
+    draft_id,
+):
+    """
+    Sletter en videresendelseskladde.
+
+    Funktionen bruges kun, hvis en fejl sker,
+    før afsendelsen er forsøgt.
     """
 
     headers = _get_headers(
         prefer_plain_text=False,
     )
 
-    # -------------------------------------------------
-    # 1. Opret forward draft (kladde)
-    # -------------------------------------------------
+    response = requests.delete(
+        _message_url(
+            user_mail,
+            draft_id,
+        ),
+        headers=headers,
+        timeout=DEFAULT_TIMEOUT,
+    )
+
+    # 204 betyder, at kladden blev slettet.
+    #
+    # 404 accepteres også, fordi kladden
+    # allerede kan være fjernet.
+    if response.status_code not in {
+        204,
+        404,
+    }:
+        response.raise_for_status()
+
+
+def _create_forward_draft(
+    user_mail,
+    message_id,
+    comment=None,
+):
+    """
+    Opretter en videresendelseskladde.
+
+    comment:
+        None:
+            Opret kladden uden kommentar.
+
+        Tekst:
+            Opret kladden med en enkel kommentar.
+    """
+
+    headers = _get_headers(
+        prefer_plain_text=False,
+    )
 
     create_url = (
         f"{_message_url(user_mail, message_id)}"
         f"/createForward"
     )
 
-    create_data = {
-        "comment": forward.get("body", ""),
-    }
+    if comment is None:
+        create_response = requests.post(
+            create_url,
+            headers=headers,
+            timeout=DEFAULT_TIMEOUT,
+        )
 
-    create_response = requests.post(
-        create_url,
-        headers=headers,
-        json=create_data,
-        timeout=DEFAULT_TIMEOUT,
-    )
+    else:
+        create_response = requests.post(
+            create_url,
+            headers=headers,
+            json={
+                "comment": str(
+                    comment
+                    or ""
+                ),
+            },
+            timeout=DEFAULT_TIMEOUT,
+        )
 
     if create_response.status_code == 404:
         raise MailNotFoundError(
@@ -666,61 +807,500 @@ def forward_mail(user_mail, message_id, forward):
     create_response.raise_for_status()
 
     draft = create_response.json()
-    draft_id = draft["id"]
 
-    # -------------------------------------------------
-    # 2. Opdater draft med modtagere og evt. subject
-    # -------------------------------------------------
+    draft_id = draft.get("id")
 
-    patch_url = _message_url(
-        user_mail,
-        draft_id,
+    if not draft_id:
+        raise ValueError(
+            "Microsoft Graph oprettede en kladde, "
+            "men svaret mangler draft-id."
+        )
+
+    return draft
+
+
+def _get_forward_draft(
+    user_mail,
+    draft_id,
+):
+    """
+    Henter videresendelseskladden igen.
+
+    Kladden hentes med HTML-body, så den
+    oprindelige videresendelsesformatering
+    kan bevares bedst muligt.
+    """
+
+    headers = _get_headers(
+        prefer_plain_text=False,
+    )
+
+    url = (
+        f"{_message_url(user_mail, draft_id)}"
+        f"?$select=id,subject,body"
+    )
+
+    response = requests.get(
+        url,
+        headers=headers,
+        timeout=DEFAULT_TIMEOUT,
+    )
+
+    if response.status_code == 404:
+        raise MailNotFoundError(
+            "Videresendelseskladden findes "
+            "ikke længere i Outlook."
+        )
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+def _update_forward_draft(
+    user_mail,
+    draft_id,
+    forward,
+    body=None,
+):
+    """
+    Opdaterer modtagere, eventuelt emne
+    og eventuelt body på kladden.
+
+    body=None:
+        Den eksisterende body ændres ikke.
+    """
+
+    headers = _get_headers(
+        prefer_plain_text=False,
     )
 
     patch_data = {
         "toRecipients": _build_recipients(
             forward.get("to")
         ),
+
         "ccRecipients": _build_recipients(
             forward.get("cc")
         ),
+
         "bccRecipients": _build_recipients(
             forward.get("bcc")
         ),
     }
 
-    # Hvis subject sendes med, overskrives forward-emnet.
     if forward.get("subject"):
-        patch_data["subject"] = forward.get(
-            "subject"
+        patch_data["subject"] = (
+            forward.get("subject")
         )
 
-    patch_response = requests.patch(
-        patch_url,
+    if body is not None:
+        patch_data["body"] = body
+
+    response = requests.patch(
+        _message_url(
+            user_mail,
+            draft_id,
+        ),
         headers=headers,
         json=patch_data,
         timeout=DEFAULT_TIMEOUT,
     )
-    patch_response.raise_for_status()
 
-    # -------------------------------------------------
-    # 3. Send draft
-    # -------------------------------------------------
+    if response.status_code == 404:
+        raise MailNotFoundError(
+            "Videresendelseskladden findes "
+            "ikke længere i Outlook."
+        )
+
+    response.raise_for_status()
+
+    return True
+
+
+def _send_forward_draft(
+    user_mail,
+    draft_id,
+):
+    """
+    Sender videresendelseskladden.
+
+    Funktionen forsøger kun afsendelsen én gang.
+    """
+
+    headers = _get_headers(
+        prefer_plain_text=False,
+    )
 
     send_url = (
         f"{_message_url(user_mail, draft_id)}"
         f"/send"
     )
 
-    send_response = requests.post(
+    response = requests.post(
         send_url,
         headers=headers,
         timeout=DEFAULT_TIMEOUT,
     )
-    send_response.raise_for_status()
+
+    if response.status_code == 404:
+        raise MailNotFoundError(
+            "Videresendelseskladden findes "
+            "ikke længere i Outlook."
+        )
+
+    response.raise_for_status()
 
     return True
 
+
+def _forward_mail_with_comment(
+    user_mail,
+    message_id,
+    forward,
+):
+    """
+    Videresender en mail med en enkel kommentar.
+
+    Graph og Outlook styrer selv den oprindelige
+    videresendelsesbody og vedhæftningerne.
+
+    Denne metode giver ikke fuld kontrol
+    over HTML-formateringen.
+    """
+
+    draft_id = None
+
+    send_attempted = False
+
+    try:
+        draft = _create_forward_draft(
+            user_mail=user_mail,
+            message_id=message_id,
+            comment=forward.get(
+                "body",
+                "",
+            ),
+        )
+
+        draft_id = draft["id"]
+
+        _update_forward_draft(
+            user_mail=user_mail,
+            draft_id=draft_id,
+            forward=forward,
+            body=None,
+        )
+
+        # VIGTIGT:
+        #
+        # Når send_attempted sættes til True,
+        # må kladden ikke slettes automatisk.
+        #
+        # Microsoft Graph kan i sjældne tilfælde
+        # have sendt mailen, selv om Python ikke
+        # modtager svaret på grund af netværksfejl.
+
+        send_attempted = True
+
+        _send_forward_draft(
+            user_mail=user_mail,
+            draft_id=draft_id,
+        )
+
+        return {
+            "success": True,
+            "forward_mode": "comment",
+            "draft_id": draft_id,
+            "send_attempted": True,
+        }
+
+    except Exception:
+
+        if (
+            draft_id
+            and not send_attempted
+        ):
+            try:
+                _delete_forward_draft(
+                    user_mail=user_mail,
+                    draft_id=draft_id,
+                )
+
+                logger.info(
+                    "Videresendelseskladde slettet: %s",
+                    draft_id,
+                )
+
+            except Exception as cleanup_error:
+                logger.warning(
+                    (
+                        "Kunne ikke slette "
+                        "videresendelseskladde %s: %s"
+                    ),
+                    draft_id,
+                    cleanup_error,
+                )
+
+        raise
+
+
+def _forward_mail_formatted(
+    user_mail,
+    message_id,
+    forward,
+):
+    """
+    Videresender en mail med HTML-formateret
+    tekst øverst.
+
+    Flow:
+
+    1. Graph opretter videresendelseskladden.
+    2. Kladdens eksisterende HTML-body hentes.
+    3. Den nye HTML indsættes efter body-tagget.
+    4. Modtagere og body opdateres.
+    5. Kladden sendes.
+
+    Den Graph-genererede videresendelsesbody
+    ændres mindst muligt.
+    """
+
+    draft_id = None
+
+    send_attempted = False
+
+    try:
+        # -------------------------------------------------
+        # 1. OPRET FORWARD DRAFT
+        # -------------------------------------------------
+
+        draft = _create_forward_draft(
+            user_mail=user_mail,
+            message_id=message_id,
+            comment=None,
+        )
+
+        draft_id = draft["id"]
+
+
+        # -------------------------------------------------
+        # 2. HENT KLADDENS HTML-BODY
+        # -------------------------------------------------
+
+        full_draft = _get_forward_draft(
+            user_mail=user_mail,
+            draft_id=draft_id,
+        )
+
+        draft_body = (
+            full_draft.get("body")
+            or {}
+        )
+
+        original_content = (
+            draft_body.get("content")
+            or ""
+        )
+
+        original_content_type = (
+            draft_body.get(
+                "contentType"
+            )
+            or "HTML"
+        ).strip().casefold()
+
+        formatted_body = str(
+            forward.get("body")
+            or ""
+        )
+
+
+        # -------------------------------------------------
+        # 3. BYG SAMLET BODY
+        # -------------------------------------------------
+
+        if original_content_type == "html":
+            combined_content = (
+                _insert_html_after_body_tag(
+                    original_html=(
+                        original_content
+                    ),
+                    new_html=(
+                        formatted_body
+                    ),
+                )
+            )
+
+        else:
+            # Kladden forventes normalt at være HTML.
+            #
+            # Hvis Graph mod forventning returnerer
+            # almindelig tekst, konverteres den
+            # oprindelige tekst til sikker HTML.
+
+            from html import escape
+
+            safe_original_content = escape(
+                original_content
+            ).replace(
+                "\n",
+                "<br>",
+            )
+
+            combined_content = (
+                formatted_body
+                + (
+                    '<div style="'
+                    'margin-top: 16px;'
+                    'border-top: 1px solid #b7b7b7;'
+                    'padding-top: 12px;'
+                    '">'
+                )
+                + safe_original_content
+                + "</div>"
+            )
+
+
+        # -------------------------------------------------
+        # 4. OPDATER KLADDEN
+        # -------------------------------------------------
+
+        _update_forward_draft(
+            user_mail=user_mail,
+            draft_id=draft_id,
+            forward=forward,
+            body={
+                "contentType": "HTML",
+                "content": combined_content,
+            },
+        )
+
+
+        # -------------------------------------------------
+        # 5. SEND KLADDEN
+        # -------------------------------------------------
+
+        # Efter denne linje må kladden ikke
+        # slettes automatisk ved fejl.
+
+        send_attempted = True
+
+        _send_forward_draft(
+            user_mail=user_mail,
+            draft_id=draft_id,
+        )
+
+        return {
+            "success": True,
+            "forward_mode": "formatted",
+            "draft_id": draft_id,
+            "send_attempted": True,
+        }
+
+    except Exception:
+
+        # Kladden slettes kun, hvis send-kaldet
+        # endnu ikke er forsøgt.
+        #
+        # Hvis send er forsøgt, beholdes kladden.
+        # Dermed undgår processen at antage,
+        # at mailen ikke blev sendt.
+
+        if (
+            draft_id
+            and not send_attempted
+        ):
+            try:
+                _delete_forward_draft(
+                    user_mail=user_mail,
+                    draft_id=draft_id,
+                )
+
+                logger.info(
+                    "Videresendelseskladde slettet: %s",
+                    draft_id,
+                )
+
+            except Exception as cleanup_error:
+                logger.warning(
+                    (
+                        "Kunne ikke slette "
+                        "videresendelseskladde %s: %s"
+                    ),
+                    draft_id,
+                    cleanup_error,
+                )
+
+        raise
+
+
+# -------------------------------------------------
+# FORWARD MAIL
+# -------------------------------------------------
+
+def forward_mail(
+    user_mail,
+    message_id,
+    forward,
+):
+    """
+    Videresender en eksisterende mail.
+
+    forward skal være en dictionary med:
+
+    {
+        "to": [],
+        "cc": [],
+        "bcc": [],
+        "subject": "...",
+        "body": "...",
+        "forward_mode": "comment"
+    }
+
+    forward_mode:
+
+    comment:
+        Bruger en enkel kommentar.
+
+        Dette er standardværdien og bevarer
+        eksisterende processers adfærd.
+
+    formatted:
+        Indsætter HTML-formateret tekst øverst
+        i den Graph-genererede videresendelse.
+
+    Hvis forward_mode ikke sendes med,
+    bruges comment.
+    """
+
+    if not isinstance(
+        forward,
+        dict,
+    ):
+        raise TypeError(
+            "forward skal være en dictionary."
+        )
+
+    forward_mode = _validate_forward_mode(
+        forward.get(
+            "forward_mode",
+            "comment",
+        )
+    )
+
+    if forward_mode == "comment":
+        return _forward_mail_with_comment(
+            user_mail=user_mail,
+            message_id=message_id,
+            forward=forward,
+        )
+
+    return _forward_mail_formatted(
+        user_mail=user_mail,
+        message_id=message_id,
+        forward=forward,
+    )
 
 # -------------------------------------------------
 # DOWNLOAD RAW ATTACHMENT
