@@ -8,7 +8,7 @@ def test_post():
 
     load_dotenv()
 
-    user = os.getenv("lis")
+    user = os.getenv("mail")
     runemail = os.getenv("runemail")
 
     mail = {

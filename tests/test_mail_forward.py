@@ -8,9 +8,9 @@ def test_forward():
 
     load_dotenv()
 
-    user = os.getenv("automatisering")
+    user = os.getenv("mail")
 
-    message_id = "INDSÆT_MAIL_ID"
+    message_id = "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0AYBBemCttF0CtwoswQOos5AAAgmRyVwAAARIAEAB1bFbMeLN_QoFwm2BYCWr9"
 
     forward = {
         "subject": "VS: Test videresendt fra Python",
