@@ -1669,7 +1669,6 @@ def download_attachment(
 
     return file_bytes
 
-
 # -------------------------------------------------
 # GET FOLDERS
 # -------------------------------------------------
@@ -1677,9 +1676,26 @@ def download_attachment(
 def get_folders(
     user_mail,
     include_hidden=True,
+    include_children=True,
 ):
     """
     Henter postkassens mailmapper.
+
+    include_hidden:
+        True medtager skjulte mapper.
+
+    include_children:
+        True henter også alle undermapper.
+
+    Returnerer blandt andet:
+
+    {
+        "id": "...",
+        "display_name": "Autosvar",
+        "path": "Indbakke/Autosvar",
+        "depth": 1,
+        "parent_folder_id": "..."
+    }
     """
 
     headers = _get_headers(
@@ -1692,58 +1708,234 @@ def get_folders(
         else "false"
     )
 
-    url = (
+    root_url = (
         f"{_user_url(user_mail)}"
         f"/mailFolders"
         f"?includeHiddenFolders="
         f"{include_hidden_value}"
     )
 
-    raw_folders = _get_all_pages(
-        url=url,
+    root_folders = _get_all_pages(
+        url=root_url,
         headers=headers,
     )
 
-    return [
-        {
+    formatted_folders = []
+
+
+    # -------------------------------------------------
+    # FORMATÉR ÉN MAPPE
+    # -------------------------------------------------
+
+    def format_folder(
+        folder,
+        path,
+        depth,
+    ):
+        """
+        Formaterer én Outlook-mappe.
+        """
+
+        display_name = (
+            folder.get("displayName")
+            or ""
+        )
+
+        return {
             # Nye standardfelter.
             "id": folder.get("id"),
-            "display_name": folder.get(
-                "displayName"
+
+            "display_name": (
+                display_name
             ),
-            "parent_folder_id": folder.get(
-                "parentFolderId"
+
+            "path": path,
+
+            "depth": depth,
+
+            "parent_folder_id": (
+                folder.get(
+                    "parentFolderId"
+                )
             ),
-            "child_folder_count": folder.get(
-                "childFolderCount"
-            ) or 0,
-            "total_item_count": folder.get(
-                "totalItemCount"
-            ) or 0,
-            "unread_item_count": folder.get(
-                "unreadItemCount"
-            ) or 0,
+
+            "child_folder_count": (
+                folder.get(
+                    "childFolderCount"
+                )
+                or 0
+            ),
+
+            "total_item_count": (
+                folder.get(
+                    "totalItemCount"
+                )
+                or 0
+            ),
+
+            "unread_item_count": (
+                folder.get(
+                    "unreadItemCount"
+                )
+                or 0
+            ),
 
             # Gamle Graph-navne bevares.
-            "displayName": folder.get(
-                "displayName"
+            "displayName": (
+                display_name
             ),
-            "parentFolderId": folder.get(
-                "parentFolderId"
-            ),
-            "childFolderCount": folder.get(
-                "childFolderCount"
-            ) or 0,
-            "totalItemCount": folder.get(
-                "totalItemCount"
-            ) or 0,
-            "unreadItemCount": folder.get(
-                "unreadItemCount"
-            ) or 0,
-        }
-        for folder in raw_folders
-    ]
 
+            "parentFolderId": (
+                folder.get(
+                    "parentFolderId"
+                )
+            ),
+
+            "childFolderCount": (
+                folder.get(
+                    "childFolderCount"
+                )
+                or 0
+            ),
+
+            "totalItemCount": (
+                folder.get(
+                    "totalItemCount"
+                )
+                or 0
+            ),
+
+            "unreadItemCount": (
+                folder.get(
+                    "unreadItemCount"
+                )
+                or 0
+            ),
+        }
+
+
+    # -------------------------------------------------
+    # HENT UNDERMAPPER
+    # -------------------------------------------------
+
+    def get_child_folders(
+        parent_folder,
+        parent_path,
+        depth,
+    ):
+        """
+        Henter alle undermapper rekursivt.
+
+        Rekursiv betyder, at funktionen også
+        henter undermappernes egne undermapper.
+        """
+
+        parent_folder_id = (
+            parent_folder.get("id")
+        )
+
+        if not parent_folder_id:
+            return
+
+        encoded_folder_id = quote(
+            str(parent_folder_id),
+            safe="",
+        )
+
+        child_url = (
+            f"{_user_url(user_mail)}"
+            f"/mailFolders/"
+            f"{encoded_folder_id}"
+            f"/childFolders"
+            f"?includeHiddenFolders="
+            f"{include_hidden_value}"
+        )
+
+        child_folders = _get_all_pages(
+            url=child_url,
+            headers=headers,
+        )
+
+        for child_folder in child_folders:
+            child_name = (
+                child_folder.get(
+                    "displayName"
+                )
+                or ""
+            )
+
+            child_path = (
+                f"{parent_path}/"
+                f"{child_name}"
+            )
+
+            formatted_folders.append(
+                format_folder(
+                    folder=child_folder,
+                    path=child_path,
+                    depth=depth,
+                )
+            )
+
+            child_count = (
+                child_folder.get(
+                    "childFolderCount"
+                )
+                or 0
+            )
+
+            if child_count > 0:
+                get_child_folders(
+                    parent_folder=(
+                        child_folder
+                    ),
+                    parent_path=(
+                        child_path
+                    ),
+                    depth=depth + 1,
+                )
+
+
+    # -------------------------------------------------
+    # GENNEMGÅ TOPMAPPER
+    # -------------------------------------------------
+
+    for root_folder in root_folders:
+        root_name = (
+            root_folder.get(
+                "displayName"
+            )
+            or ""
+        )
+
+        formatted_folders.append(
+            format_folder(
+                folder=root_folder,
+                path=root_name,
+                depth=0,
+            )
+        )
+
+        child_count = (
+            root_folder.get(
+                "childFolderCount"
+            )
+            or 0
+        )
+
+        if (
+            include_children
+            and child_count > 0
+        ):
+            get_child_folders(
+                parent_folder=(
+                    root_folder
+                ),
+                parent_path=root_name,
+                depth=1,
+            )
+
+    return formatted_folders
 
 # -------------------------------------------------
 # MARK AS READ
