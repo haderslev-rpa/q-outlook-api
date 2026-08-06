@@ -22,6 +22,7 @@ VIGTIGT:
 """
 
 import base64
+import logging
 import os
 from pathlib import Path
 from urllib.parse import quote
